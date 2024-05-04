@@ -1,0 +1,368 @@
+---
+title: "IMDb Top Movies Analysis"
+author: "Taylor Parchment"
+date: "2024-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, quiet = TRUE)
+```
+
+This data contains the top 1000 movies by their user scores on IMDb. It's available here on [Kaggle](https://www.kaggle.com/datasets/harshitshankhdhar/imdb-dataset-of-top-1000-movies-and-tv-shows/data).
+
+Some questions for analysis after browsing the data:
+
+ + What is the disparity between user and critic scores? What's the most controversial film between users and critics?
+ 
+ + How do top grossing movies score? Is there a clear correlation between score and profit?
+ 
+ + For each actor and director, what's the total gross profit of all the movies they've participated in?
+ 
+ + Which genres are most prominent among the top movies?
+ 
+ + Which genre of movie do each actor and director prefer?
+
+
+
+```{r libraries, message=FALSE}
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(plotly)
+library(forcats)
+library(png)
+library(ggimage)
+library(grid)
+```
+
+### Importing, inspecting, and a bit of data cleaning
+
+```{r import data}
+imdb_df <- read.csv("/Users/taylorparchment/Downloads/imdb_top_1000.csv")
+glimpse(imdb_df)
+colSums(is.na(imdb_df))
+```
+The "Gross" category of this data is a character vector, which will need to be converted to an integer. There are also some blank strings which aren't getting detected as null values.
+
+```{r cleaning}
+# Convert numbers from strings to integers
+imdb_df <- imdb_df %>% 
+  mutate(Gross = parse_number(Gross))
+
+# Get Gross column's null values
+sum(is.na(imdb_df$Gross))
+```
+
+Additionally, I later noticed that "Joe Russo" is listed as "Star1" several times, but it appears he was an additional director in those movies, and not an actor. For simplicity's sake, I'll just delete these cells so he doesn't appear under any charts as an actor.
+
+```{r}
+imdb_df$Star1[imdb_df$Star1 == "Joe Russo"] <- NA
+```
+
+
+## Comparing scores
+
+```{r top movies by scores} 
+# Top movies by user score
+top_user <- imdb_df %>% 
+  arrange(desc(IMDB_Rating)) %>% 
+  select(Series_Title, Released_Year, IMDB_Rating, Meta_score, Gross)
+
+# Top movies by metascore
+top_meta <- imdb_df %>% 
+  arrange(desc(Meta_score)) %>% 
+  select(Series_Title, Released_Year, Meta_score, IMDB_Rating, Gross)
+```
+
+### Top 20 Movies by User Score
+```{r}
+knitr::kable(head(top_user, 20))
+```
+
+### Top 20 Movies by Metascore
+```{r}
+knitr::kable(head(top_meta, 20))
+```
+
+Interestingly, browsing through the top 20 movies by each score, it appears the movies valued by average viewers and critics is quite different. Especially looking at the top metascore movies, we can see some with quite different user scores. I want to know what movie has the biggest difference between the groups.
+
+## Finding biggest critic and user score disparity
+
+```{r}
+score_disparity <- imdb_df %>% 
+  mutate(score_diff = abs(IMDB_Rating * 10 - Meta_score)) %>% 
+  select(Series_Title, Released_Year, score_diff, IMDB_Rating, Meta_score,Genre) %>% 
+  arrange(desc(score_diff)) %>% 
+  head(10)
+knitr::kable(score_disparity)
+```
+
+The movie with the biggest difference between user and critical score is the 2001 drama **I Am Sam**. All of the movies here were liked by users and disliked by critics, and the majority of the movies have drama listed as at least one genre.
+
+This lets us know what movies users liked and not critics, but I'd like to know the other direction too.
+
+```{r}
+# Look only for movies critics liked
+score_disparity2 <- imdb_df %>% 
+  mutate(score_diff = Meta_score - IMDB_Rating * 10) %>% 
+  select(Series_Title, Released_Year, score_diff, IMDB_Rating, Meta_score,Genre) %>% 
+  arrange(desc(score_diff)) %>% 
+  head(10)
+knitr::kable(score_disparity2)
+```
+
+It looks like the score differences here are much smaller. It's probably also due to the fact that this data was selected from user scores, so they are guaranteed not to be very low, whereas critic scores could be any value.
+
+## Top grossing movies vs. scores
+
+I'll get an idea of the highest-earning movies.
+
+```{r top grossing calc}
+# Find the top 100 top grossing movies
+top_grossing <- imdb_df %>% 
+  arrange(desc(Gross)) %>% 
+  select(Series_Title, Released_Year, IMDB_Rating, Meta_score, Gross) %>% 
+  head(100)
+knitr ::kable(head(top_grossing, 10))
+```
+
+First, I want to see if how much profit a movie makes is indicative of how well average viewers will like it.
+
+```{r top grossing vs user score graph, warning=FALSE, message=FALSE}
+# Top grossing movies vs user scores
+# Graph a scatter plot and line of best fit
+gross_vs_user <- ggplot(top_grossing, aes(x = Gross, y = IMDB_Rating, text = Series_Title)) +
+  geom_point() +
+  geom_smooth(aes(group=-1), method="lm", se = FALSE) +
+  scale_x_continuous(limits = c(0, 1e9), breaks = seq(0, 1e9, by = 100000000), labels = c("0", "100M", "200M", "300M", "400M", "500M", "600M", "700M", "800M", "900M", "1B")) +
+  scale_y_continuous(limits = c(7.5, 9.2)) +
+  labs(title = "Top Grossing Movies vs. User Score",
+       y = "User Score",
+       x = "Gross Profit in Dollars") + theme_minimal() +
+  coord_cartesian(xlim = c(0, 1e9), ylim = c(7.5, 9.2))
+
+ggplotly(gross_vs_user)
+```
+
+I'll try the same thing with metascore.
+
+```{r top grossing vs metascore graph, warning=FALSE, message=FALSE}
+gross_vs_meta <- ggplot(top_grossing, aes(x = Gross, y = Meta_score, text = Series_Title)) +
+  geom_point() + 
+  geom_smooth(aes(group=-1), method="lm", se = FALSE) +
+  scale_x_continuous(limits = c(0, 1e9), breaks = seq(0, 1e9, by = 100000000), labels = c("0", "100M", "200M", "300M", "400M", "500M", "600M", "700M", "800M", "900M", "1B")) +
+  scale_y_continuous(limits = c(50, 100)) +
+  labs(title = "Top Grossing Movies vs. Metascore",
+       y = "Metascore",
+       x = "Gross Profit in Dollars") + theme_minimal()
+ggplotly(gross_vs_meta)
+```
+
+While the scores individual top grossing movies received are different between average and critical raters, their spreads are similar, with metascore spread a bit larger. Both show very weak relationships if any to gross profit.
+
+It seems like the reverse of this relationship would be stronger. I would expect user or critical scores to be more indicative of profit.
+
+## Top scores vs. gross profit
+
+
+```{r user score vs top grossing, warning=FALSE, message=FALSE}
+user_vs_gross <- ggplot(head(top_user, 100), aes(x = IMDB_Rating, y = Gross, text = Series_Title)) +
+  geom_point() +
+  geom_smooth(aes(group=-1), method="lm", se = FALSE) +
+  labs(title = "Top 100 IMDb Movies by User Score vs. Gross Profit",
+       y = "Gross Profit in Dollars",
+       x = "User Score") + 
+  scale_y_continuous(breaks = seq(0, 1e9, by = 100000000), labels = c("0", "100M", "200M", "300M", "400M", "500M", "600M", "700M", "800M", "900M", "1B")) + theme_minimal()
+ggplotly(user_vs_gross)
+```
+
+The relationship between them is still less obvious than I would have expected. Let's look into the relationship a bit.
+
+```{r}
+summary(lm(formula = Gross ~ IMDB_Rating, data = top_user))
+```
+With a p-value of 0.005651, we can assume it's statistically significant.
+
+```{r metascore vs top grossing, warning=FALSE, message=FALSE}
+meta_vs_gross <- ggplot(head(top_meta, 100), aes(x = Meta_score, y = Gross, text = Series_Title)) +
+  geom_point() +
+  geom_smooth(aes(group=-1), method="lm", se = FALSE) +
+  labs(title = "Top 100 IMDb Movies by Metascore vs. Gross Profit",
+       y = "Gross Profit in Dollars",
+       x = "Metascore") + 
+  scale_y_continuous(breaks = seq(0, 1e9, by = 100000000), labels = c("0", "100M", "200M", "300M", "400M", "500M", "600M", "700M", "800M", "900M", "1B")) + theme_minimal()
+ggplotly(meta_vs_gross)
+```
+
+The connection between metascore and profit looks weaker. It seems ridiculous that a higher metascore would reduce profits. I'll check this too.
+
+```{r}
+summary(lm(formula = Gross ~ Meta_score, data = top_meta))
+```
+This relationship is not significant.
+
+Of course, thinking about this sensibly, it's reasonable that when the average viewer likes a movie, that would drive profit much more than good critical response only. This is also very likely due to the bias of the dataset -- this is a set of top 1000 *user rated movies*, so this data is heavily skewed towards them. A dataset of highest scoring critical reviews could be more informative of its relationship to profit.
+
+## Top grossing actors and directors
+
+Next I'll take a look at some of the actors and directors who have been a part of the highest grossing movies total.
+
+```{r}
+top_grossing_actors <- imdb_df %>% 
+  pivot_longer(cols = starts_with("Star"), values_to = "Actor") %>%   # Get each actor in one row
+  filter(!is.na(Actor)) %>% 
+  group_by(Actor) %>% 
+  summarize(Total_Gross = sum(Gross, na.rm = TRUE), Gross_Per_Movie = mean(Gross, na.rm = TRUE)) %>% 
+  arrange(desc(Total_Gross))
+
+top_grossing_directors <- imdb_df %>% 
+  pivot_longer(cols = Director, values_to = "Director") %>%
+  group_by(Director) %>% 
+  summarize(Total_Gross = sum(Gross, na.rm = TRUE), Gross_Per_Movie = mean(Gross, na.rm = TRUE)) %>% 
+  arrange(desc(Total_Gross))
+```
+
+```{r highest gross actor chart}
+# Highest gross actor chart
+ggplot(head(top_grossing_actors, 10), aes(x = fct_reorder(Actor, Total_Gross), y = Total_Gross)) +
+  geom_col() +
+  labs(title = "Total Gross Profit of Actors' Movies",
+       x = "Actor",
+        y = "Total Gross Movie Profit") + 
+  scale_y_continuous(breaks = seq(0, 3e9, by = 500000000), labels = c("0", "500M", "1B", "1.5B", "2B", "2.5B", "3B")) + coord_flip() + theme_minimal()
+```
+
+
+```{r highest gross director chart}
+# Highest gross director chart
+ggplot(head(top_grossing_directors, 10), aes(x = fct_reorder(Director, Total_Gross), y = Total_Gross)) +
+  geom_col() +
+  labs(title = "Total Gross Profit of Directors' Movies",
+       x = "Director",
+        y = "Total Gross Movie Profit") + 
+  scale_y_continuous(breaks = seq(0, 3e9, by = 500000000), labels = c("0", "500M", "1B", "1.5B", "2B", "2.5B", "3B")) + coord_flip() + theme_minimal()
+```
+
+## Investigating movie genres
+
+Next, I want to see which movie genre is the most represented in the top thousand movies.
+
+```{r}
+# Make data longer by separating Genre column, count totals
+total_genre_count <- imdb_df %>% 
+  separate_rows(Genre, sep = ",\\s*") %>% 
+  group_by(Genre) %>% 
+  summarize(count = n()) %>% 
+  arrange(desc(count))
+
+ggplot(total_genre_count, aes(x = fct_reorder(Genre, count), y = count)) +
+  geom_col() +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Total Genre Count",
+       x = "Genre",
+       y = "Total Number of Movies")
+```
+
+I'm also curious what some of the most prolific actors' and directors' favorite genres are. I'll see which genres they are listed the most in.
+
+```{r message = FALSE}
+# Get each actors' total number of times acted in each genre
+# Elongate data by genre and actor, group by actor and each genre
+actor_genre_count <- imdb_df %>% 
+  separate_rows(Genre, sep = ",\\s*") %>% 
+  pivot_longer(cols = starts_with("Star"), names_to = NULL, values_to = "Actor") %>% 
+  group_by(Actor, Genre) %>% 
+  summarize(count = n()) %>% 
+  arrange(desc(count))
+
+# Get the director's total genres too
+director_genre_count <- imdb_df %>% 
+  separate_rows(Genre, sep = ",\\s*") %>% 
+  group_by(Director, Genre) %>% 
+  summarize(count = n()) %>% 
+  arrange(desc(count))
+```
+
+```{r}
+knitr::kable(head(actor_genre_count, 20))
+knitr::kable(head(director_genre_count, 20))
+```
+
+
+### Conclusions
+
+I think most people know that audiences and critics tend to value different movies, but it's interesting to see that the *top audience and critic favorites are almost entirely different*, and some movies are especially divisive. *User-liked dramas* are often subject to lower critical scores, while *old, film-noir* movies are extremely highly rated by critics, but were only received normally by the general audience.
+
+When it comes to profit and scores, profit doesn't tell us much about how viewers might have rated a movie, but *higher general audience scores do seem indicative of higher gross profit.* This is not true, however, of critic scores.
+
+Among the actors who've been in the most top-grossing movies, we see a lot of actors from the *Marvel franchise* (Robert Downey Jr, Chris Evans, Mark Ruffalo) and the *Harry Potter* series (Daniel Radcliffe, Rupert Gint).
+
+As for genres, *drama* is by far the most commonly listed. Of course, movies can be listed under several genres, and it's pretty hard to have a movie without some kind of drama, so it might not be very informative. Looking at actors and directors, some that stand out are *Robert De Nero* for his number of drama and crime listings, and *Hayao Miyazaki* for his 11 animations.
+
+Finally, I'll make a nice visual of the two most controversial movies of the list.
+
+```{r, fig.height=7, fig.width=6}
+boyhood <- "/Users/taylorparchment/Desktop/Boyhood_(2014).png"
+iamsam <- "/Users/taylorparchment/Desktop/IAmSam.png"
+
+# filter two controversial titles
+# get their two score types on different rows
+controversial <- imdb_df %>% 
+  filter(Series_Title == "Boyhood" | Series_Title == "I Am Sam") %>% 
+  mutate(Viewers = IMDB_Rating * 10,
+         Critics = Meta_score) %>% 
+  pivot_longer(cols = c(Viewers, Critics), names_to = "Score_Type", values_to = "Score") 
+
+
+movie_bar_chart <- ggplot(controversial, aes(x = Series_Title, y = Score, fill = Score_Type)) + 
+  
+  # side by side bars
+  geom_col(position = position_dodge()) +
+  
+  #change visual details
+  theme_transparent() + 
+  coord_cartesian(ylim = c(0, max(controversial$Score) + 60)) +
+  scale_y_continuous(breaks=c(25, 50, 75, 100)) +
+  
+  # display and format labels
+  labs(title = "Viewers vs Critics",
+       subtitle = "Most controversial movies between viewers and critics of IMDb's top 1000",
+       fill = "") +
+  theme(legend.position = "bottom",
+    plot.title = element_text(face = "bold",
+                              size = 17, hjust = 0.5)) +
+  
+  # add score value labels on the bars
+  geom_text(
+    aes(label = Score),
+    color = "white", size = 3,
+    vjust = 2, position = position_dodge(.9), fontface ="bold") +
+  
+  # add Boyhood text
+  geom_label(aes(x= 0.41, y = 150), label = "2015 experimental film \nfollowing the real \nadolescence of boy's life", size = 3, hjust = 0, vjust = 0.5, show.legend = FALSE) +
+  geom_label(aes(x= 0.41, y = 134), label = "Won Oscar for best\nsupporting performance", size = 3, hjust = 0, vjust = 0.5, show.legend = FALSE) +
+  geom_label(aes(x= 0.41, y = 118), label = 'Hailed as "epic in scope",\n"astonishing achievement"\nby critics', size = 3, hjust = 0, vjust = 0.5, show.legend = FALSE) +
+  
+  # add I am Sam text
+    geom_label(aes(x= 1.99, y = 150), label = "2001 drama about a\ndisabled man's fight for\ncustody of daughter", size = 3, hjust = 0, vjust = 0.5, show.legend = FALSE, fill = "lightblue") +
+  geom_label(aes(x= 1.99, y = 134), label = 'Described as "powerful",\n"heartwarming" by viewers' , size = 3, hjust = 0, vjust = 0.5, show.legend = FALSE, fill = "lightblue") +
+  geom_label(aes(x= 1.99, y = 118), label = 'Critics say "contrived",\n"insensitive", "shamelessly\nsentimental"' , size = 3, hjust = 0, vjust = 0.5, show.legend = FALSE, fill = "lightblue") +
+  
+  # remove x-axis label
+  xlab("") +
+  
+  # display movie images
+  geom_image(
+    aes(image = boyhood), x = 1.27, y =135, size = 0.3, by = "height") +
+  
+  geom_image(
+    aes(image = iamsam), x = 1.73, y =135, size = 0.3, by = "height") 
+print(movie_bar_chart)
+```
+
+```{r}
+# ggsave("/Users/taylorparchment/Desktop/imdb_chart.png", movie_bar_chart, width = 6, height = 7, bg = "white")
+```
+
